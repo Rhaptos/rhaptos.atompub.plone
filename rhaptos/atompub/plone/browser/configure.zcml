@@ -1,0 +1,34 @@
+<configure
+    xmlns="http://namespaces.zope.org/zope"
+    xmlns:browser="http://namespaces.zope.org/browser"
+    i18n_domain="rhaptos.atompub.plone">
+
+    <browser:page
+        for="*"
+        name="atompub"
+        class=".atompub.AtomPubService"
+        permission="zope2.View"
+        />
+
+    <browser:page
+        for="*"
+        name="atompub-entry"
+        class=".atompub.AtomPubService"
+        permission="zope2.View"
+        />
+
+    <browser:page
+        for="Products.ATContentTypes.interface.folder.IATFolder"
+        name="atom.feed"
+        class=".atompub.AtomFeed"
+        template="atom.pt"
+        permission="zope2.View"
+        />
+
+    <adapter
+        for="Products.CMFCore.interfaces.IFolderish
+             zope.publisher.interfaces.http.IHTTPRequest"
+        provides="rhaptos.atompub.plone.interfaces.IAtomPubServiceAdapter"
+        factory=".atompub.PloneFolderAtomPubAdapter" />
+
+</configure>
