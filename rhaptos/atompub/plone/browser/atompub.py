@@ -1,3 +1,7 @@
+import sys
+import logging
+import traceback
+import transaction
 from copy import copy
 from cStringIO import StringIO
 
@@ -7,6 +11,8 @@ from xml.parsers.expat import ExpatError
 
 from Acquisition import aq_inner, aq_base
 
+from zExceptions import Unauthorized, MethodNotAllowed, NotFound
+from zope.security.interfaces import Forbidden
 from zope.interface import Interface, implements
 from zope.publisher.interfaces.http import IHTTPRequest
 from zope.component import adapts, getMultiAdapter, queryUtility
@@ -24,6 +30,42 @@ from Products.Archetypes.Marshall import formatRFC822Headers
 from rhaptos.atompub.plone.interfaces import IAtomPubServiceAdapter
 from rhaptos.atompub.plone.exceptions import PreconditionFailed
 
+logger = logging.getLogger(__name__)
+
+def show_error_document(func):
+    """ A decorator to be applied to the methods in the Atompub classes.
+        It checks for exceptions, and renders an error document
+        with the stack trace embedded in the correct markup. """
+    def wrapper(*args, **kwargs):
+        self = args[0]
+        def _abort_and_show(status, **kw):
+            transaction.abort()
+            self.request.response.setStatus(status)
+            view = ViewPageTemplateFile('errordocument.pt')
+            if view.__class__.__name__ == 'ZopeTwoPageTemplateFile':
+                # Zope 2.9
+                return ViewPageTemplateFile('errordocument.pt').__of__(
+                    self.context)(**kw)
+            else:
+                # Everthing else
+                return ViewPageTemplateFile('errordocument.pt')(self, **kw)
+        try:
+            value = func(*args, **kwargs)
+        except Unauthorized, e:
+            return _abort_and_show(401, title="Unauthorized", summary=e.message)
+        except PreconditionFailed, e:
+            return _abort_and_show(412, title="Precondition Failed",
+                summary="Precondition Failed")
+        except Forbidden, e:
+            return _abort_and_show(403, summary = e.args[0])
+        except Exception:
+            formatted_tb = traceback.format_exc()
+            logger.error(formatted_tb)
+            return _abort_and_show(400, title="Bad request",
+                summary=sys.exc_info()[1], verbose=formatted_tb)
+        return value
+    wrapper.__doc__ = func.__doc__
+    return wrapper
 
 METADATA_MAPPING =\
         {'title': 'title',
@@ -107,7 +149,7 @@ class AtomPubService(BrowserView):
     media_entry_representation = \
             ViewPageTemplateFile('media_entry_representation.pt')
 
-
+    @show_error_document
     def __call__(self):
         # Adapt and call
         adapter = getMultiAdapter((aq_inner(self.context),
@@ -129,27 +171,32 @@ class AtomPubService(BrowserView):
 
         # return the correct result based on the content type
         content_type = getContentType(getHeader(self.request, 'content-type'))
+        view = self.__of__(self.context)
         if content_type in ATOMPUB_CONTENT_TYPES:
-            result = self.atom_entry_document(entry=obj)
-            return result
+            pt = self.atom_entry_document.__of__(view)
+            return pt(entry=obj)
         else:
-            result = self.media_entry_representation(entry=obj)
-            return result
-
-        return 'Nothing to do'
+            pt = self.media_entry_representation.__of__(view)
+            return pt(entry=obj)
     
 
-    def getContent(self, item):
+    def getItemContent(self, item):
+        """ Get the file or local content.
+        """
         if item.portal_type == 'File':
             return item.getFile().data
         return getattr(item, 'rawText', None)
 
 
     def metadata(self, item):
+        """ Get all metadata headers
+        """
         return item.getMetadataHeaders()
 
 
     def formatMetadata(self, data):
+        """ Format the metadata for the template
+        """
         # <dcterms:title>Title</dcterms:title>
         name = data[0].lower()
         content = data[1]
@@ -182,8 +229,17 @@ class PloneFolderAtomPubAdapter(object):
         else:
             return plone_utils.normalizeString(name)
 
-
+    
     def __call__(self):
+        # first let's check if the authenticated member has permission
+        pmt = getToolByName(self.context, 'portal_membership')
+        member = pmt.getAuthenticatedMember()
+        if not pmt.checkPermission('Modify portal content', self.context):
+            raise Unauthorized(
+                'User %s does not have the required permissions '
+                'to add content to %s.' %(member.getId(), self.context.getId())
+            )
+
         content_type = getContentType(getHeader(self.request, 'content-type'))
         disposition = getHeader(self.request, 'content-disposition')
         slug = getHeader(self.request, 'slug')

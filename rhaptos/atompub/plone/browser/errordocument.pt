@@ -1,0 +1,3 @@
+<span tal:replace="options/title|nothing">ERROR</span>
+<span tal:replace="options/summary|nothing">Summary</span>
+<span tal:replace="options/verbose|nothing">Verbose description</span>
