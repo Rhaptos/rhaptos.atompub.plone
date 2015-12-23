@@ -33,6 +33,10 @@ setup(name='rhaptos.atompub.plone',
       [z3c.autoinclude.plugin]
       target = plone
       """,
-      setup_requires=["PasteScript"],
+      setup_requires=[
+          'PasteDeploy==1.5.0',
+          'PasteScript==1.7.5',
+          'Paste==1.7.5',
+          ],
       paster_plugins=["ZopeSkel"],
       )
